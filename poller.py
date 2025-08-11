@@ -21,12 +21,9 @@ load_dotenv()
 
 SNAPDIR = os.environ.get("SNAPDIR", "./route_snaps")
 
-# --- Static fallback inventory (if not using NetBox) ---
-STATIC_DEVICES = [
-    # DevNet Always-On NX-OS Sandbox
-    {"device_type":"cisco_nxos","host":"sbx-nxos-mgmt.cisco.com","username":"admin",
-     "password":"Admin_1234!","name":"sbx-nxos"},
-]
+# --- Device inventory configuration ---
+# No hardcoded devices - all devices should be configured via web UI or environment
+STATIC_DEVICES = []
 STATIC_VRFS = ["default", "CUSTOMER_A"]
 STATIC_AFIS = [AFI4, AFI6]
 
@@ -36,6 +33,7 @@ def get_inventory():
         from inventory_netbox import inventory
         return list(inventory())
     else:
+        # Return empty list - devices should be configured externally
         out = []
         for d in STATIC_DEVICES:
             out.append({**d, "vrfs": STATIC_VRFS, "afis": STATIC_AFIS})

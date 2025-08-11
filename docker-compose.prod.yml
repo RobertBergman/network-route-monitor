@@ -1,86 +1,130 @@
 version: '3.8'
 
 services:
-  # Route poller - collects routing data from devices
-  poller:
-    image: ghcr.io/robertbergman/network-route-monitor-poller:latest
-    container_name: route-poller
-    env_file: .env
+  # PostgreSQL database for device configuration and route storage
+  postgres:
+    image: postgres:15-alpine
+    container_name: route-db
+    environment:
+      - POSTGRES_DB=routemonitor
+      - POSTGRES_USER=routemonitor
+      - POSTGRES_PASSWORD=${DB_PASSWORD:-changeme}
     volumes:
-      - ./route_snaps:/app/route_snaps
-      - ./poller.py:/app/poller.py:ro
+      - postgres-data:/var/lib/postgresql/data
     networks:
       - route-monitor
-    restart: always
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U routemonitor"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    restart: unless-stopped
+
+  # Database initialization service - runs once on first deployment
+  db-init:
+    image: ghcr.io/robertbergman/network-route-monitor-db:latest
+    container_name: route-db-init
+    environment:
+      - DATABASE_URL=postgresql://routemonitor:${DB_PASSWORD:-changeme}@postgres/routemonitor
+    volumes:
+      - ./.encryption_key:/app/.encryption_key
+    networks:
+      - route-monitor
+    depends_on:
+      postgres:
+        condition: service_healthy
+    command: |
+      sh -c "
+        echo 'Waiting for database...' &&
+        sleep 5 &&
+        python setup_database.py --init &&
+        echo 'Database initialized'
+      "
+    restart: "no"
+
+  # Route poller with database backend - starts with no devices configured
+  poller:
+    image: ghcr.io/robertbergman/network-route-monitor-db:latest
+    container_name: route-poller
+    environment:
+      - DATABASE_URL=postgresql://routemonitor:${DB_PASSWORD:-changeme}@postgres/routemonitor
+      - POLL_INTERVAL_SEC=${POLL_INTERVAL_SEC:-60}
+      - USE_NXAPI=${USE_NXAPI:-true}
+      - NXAPI_SCHEME=${NXAPI_SCHEME:-https}
+      - NXAPI_PORT=${NXAPI_PORT:-443}
+      - NXAPI_VERIFY=${NXAPI_VERIFY:-false}
+    volumes:
+      - ./.encryption_key:/app/.encryption_key:ro
+    networks:
+      - route-monitor
+    depends_on:
+      postgres:
+        condition: service_healthy
+      db-init:
+        condition: service_completed_successfully
+    restart: unless-stopped
+    command: python poller_db.py
     pull_policy: always
     healthcheck:
-      test: ["CMD", "python", "-c", "import os; exit(0 if os.path.exists('/app/route_snaps') else 1)"]
+      test: ["CMD", "python", "-c", "import sys; sys.exit(0)"]
       interval: 30s
       timeout: 10s
       retries: 3
 
-  # Prometheus exporter
+  # Prometheus exporter with database backend
   exporter:
-    image: ghcr.io/robertbergman/network-route-monitor-exporter:latest
+    image: ghcr.io/robertbergman/network-route-monitor-db:latest
     container_name: route-exporter
-    env_file: .env
+    environment:
+      - DATABASE_URL=postgresql://routemonitor:${DB_PASSWORD:-changeme}@postgres/routemonitor
+      - PROM_PORT=${PROM_PORT:-9108}
     ports:
       - "9108:9108"
     volumes:
-      - ./route_snaps:/app/route_snaps:ro
+      - ./.encryption_key:/app/.encryption_key:ro
     networks:
       - route-monitor
     restart: always
     pull_policy: always
     depends_on:
-      - poller
+      postgres:
+        condition: service_healthy
+      db-init:
+        condition: service_completed_successfully
+    command: python exporter_db.py
     healthcheck:
       test: ["CMD", "python", "-c", "import requests; requests.get('http://localhost:9108/metrics')"]
       interval: 30s
       timeout: 10s
       retries: 3
 
-  # API server
+  # API server with database backend and device management UI
   api:
-    image: ghcr.io/robertbergman/network-route-monitor-api:latest
+    image: ghcr.io/robertbergman/network-route-monitor-db:latest
     container_name: route-api
-    env_file: .env
+    environment:
+      - DATABASE_URL=postgresql://routemonitor:${DB_PASSWORD:-changeme}@postgres/routemonitor
     ports:
-      - "5000:5000"
+      - "8080:5000"
     volumes:
-      - ./route_snaps:/app/route_snaps:ro
+      - ./.encryption_key:/app/.encryption_key:ro
       - ./webui:/app/webui:ro
     networks:
       - route-monitor
     restart: always
     pull_policy: always
     depends_on:
-      - poller
+      postgres:
+        condition: service_healthy
+      db-init:
+        condition: service_completed_successfully
+    command: uvicorn webui_db:app --host 0.0.0.0 --port 5000
     healthcheck:
-      test: ["CMD", "python", "-c", "import requests; requests.get('http://localhost:5000/api/health')"]
+      test: ["CMD", "python", "-c", "import requests; requests.get('http://localhost:5000/api/status')"]
       interval: 30s
       timeout: 10s
       retries: 3
 
-  # Nginx reverse proxy and static file server
-  nginx:
-    image: nginx:alpine
-    container_name: route-nginx
-    ports:
-      - "80:80"
-    volumes:
-      - ./webui:/usr/share/nginx/html:ro
-      - ./nginx.conf:/etc/nginx/conf.d/default.conf:ro
-    networks:
-      - route-monitor
-    restart: always
-    depends_on:
-      - api
-    healthcheck:
-      test: ["CMD", "wget", "--quiet", "--tries=1", "--spider", "http://localhost/"]
-      interval: 30s
-      timeout: 10s
-      retries: 3
 
   # Optional: Prometheus for metrics collection
   prometheus:
@@ -125,5 +169,6 @@ networks:
     driver: bridge
 
 volumes:
+  postgres-data:
   prometheus-data:
   grafana-data:
