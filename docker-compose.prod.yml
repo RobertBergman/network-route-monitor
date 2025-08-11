@@ -3,7 +3,7 @@ version: '3.8'
 services:
   # Route poller - collects routing data from devices
   poller:
-    build: .
+    image: ghcr.io/robertbergman/network-route-monitor-poller:latest
     container_name: route-poller
     env_file: .env
     volumes:
@@ -12,7 +12,7 @@ services:
     networks:
       - route-monitor
     restart: always
-    command: python poller.py
+    pull_policy: always
     healthcheck:
       test: ["CMD", "python", "-c", "import os; exit(0 if os.path.exists('/app/route_snaps') else 1)"]
       interval: 30s
@@ -21,7 +21,7 @@ services:
 
   # Prometheus exporter
   exporter:
-    build: .
+    image: ghcr.io/robertbergman/network-route-monitor-exporter:latest
     container_name: route-exporter
     env_file: .env
     ports:
@@ -31,7 +31,7 @@ services:
     networks:
       - route-monitor
     restart: always
-    command: python exporter.py
+    pull_policy: always
     depends_on:
       - poller
     healthcheck:
@@ -42,16 +42,18 @@ services:
 
   # API server
   api:
-    build: .
+    image: ghcr.io/robertbergman/network-route-monitor-api:latest
     container_name: route-api
     env_file: .env
+    ports:
+      - "5000:5000"
     volumes:
       - ./route_snaps:/app/route_snaps:ro
       - ./webui:/app/webui:ro
     networks:
       - route-monitor
     restart: always
-    command: uvicorn webui:app --host 0.0.0.0 --port 5000 --workers 2
+    pull_policy: always
     depends_on:
       - poller
     healthcheck:
