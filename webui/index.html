@@ -1,0 +1,93 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <title>Routing Table & BGP RIB Change Tracker</title>
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <link rel="stylesheet" href="styles.css" />
+</head>
+<body>
+  <header class="topbar">
+    <h1>Routing Table & BGP RIB Change Tracker</h1>
+    <div class="status">
+      <span id="healthStatus">Checking...</span>
+    </div>
+  </header>
+
+  <section class="controls">
+    <div class="control">
+      <label for="deviceSelect">Device</label>
+      <select id="deviceSelect"></select>
+    </div>
+    <div class="control">
+      <label for="tableSelect">Table</label>
+      <select id="tableSelect">
+        <option value="rib">RIB</option>
+        <option value="bgp">BGP</option>
+      </select>
+    </div>
+    <div class="control">
+      <label for="vrfSelect">VRF</label>
+      <select id="vrfSelect"></select>
+    </div>
+    <div class="control">
+      <label for="afiSelect">AFI</label>
+      <select id="afiSelect">
+        <option value="ipv4">ipv4</option>
+        <option value="ipv6">ipv6</option>
+      </select>
+    </div>
+    <div class="control">
+      <button id="refreshBtn">Refresh</button>
+    </div>
+  </section>
+
+  <nav class="tabs">
+    <button class="tab active" data-tab="latest">Latest</button>
+    <button class="tab" data-tab="diffs">Diffs</button>
+    <button class="tab" data-tab="history">History</button>
+  </nav>
+
+  <main>
+    <section id="latest" class="tab-panel active">
+      <div class="toolbar">
+        <input type="text" id="latestFilter" placeholder="Filter (e.g. prefix, nexthop, peer, asn)..." />
+      </div>
+      <div id="latestSummary" class="summary"></div>
+      <div id="latestTable" class="table-wrap"></div>
+    </section>
+
+    <section id="diffs" class="tab-panel">
+      <div class="split">
+        <div class="left">
+          <h3>Diffs</h3>
+          <div id="diffList" class="list"></div>
+        </div>
+        <div class="right">
+          <h3>Details</h3>
+          <div id="diffDetails"></div>
+        </div>
+      </div>
+    </section>
+
+    <section id="history" class="tab-panel">
+      <div class="split">
+        <div class="left">
+          <h3>History</h3>
+          <div id="historyList" class="list"></div>
+        </div>
+        <div class="right">
+          <h3>Snapshot</h3>
+          <div id="historyDetails"></div>
+        </div>
+      </div>
+    </section>
+  </main>
+
+  <footer class="footer">
+    <span>SNAPDIR: <code id="snapdirVal">-</code></span>
+  </footer>
+
+  <script src="app.js"></script>
+</body>
+</html>

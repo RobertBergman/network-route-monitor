@@ -1,0 +1,329 @@
+{
+  "device": {
+    "hostname": "sbx-nxos-mgmt.cisco.com",
+    "username": "admin",
+    "password": "Admin_1234!",
+    "ports": {
+      "ssh": 22,
+      "netconf": 830,
+      "http": 80,
+      "https": 443,
+      "restconf": 443
+    },
+    "type": "nxos",
+    "description": "Cisco DevNet Always-On NXOS Sandbox",
+    "connection_timeout": 30,
+    "command_timeout": 10
+  },
+  "bgp": {
+    "local_as": 65001,
+    "router_id": "192.168.1.1",
+    "hold_time": 180,
+    "keepalive_time": 60,
+    "connect_retry_time": 30,
+    "peers": [
+      {
+        "name": "ISP1-Primary",
+        "address": "10.0.1.1",
+        "remote_as": 65100,
+        "description": "Primary ISP upstream provider",
+        "multihop": false,
+        "passive": false,
+        "enabled": true,
+        "import_policy": "accept-all",
+        "export_policy": "export-local"
+      },
+      {
+        "name": "ISP2-Backup",
+        "address": "10.0.2.1",
+        "remote_as": 65200,
+        "description": "Backup ISP upstream provider",
+        "multihop": false,
+        "passive": false,
+        "enabled": true,
+        "import_policy": "accept-all",
+        "export_policy": "export-local"
+      },
+      {
+        "name": "Internal-Router-1",
+        "address": "192.168.10.2",
+        "remote_as": 65001,
+        "description": "iBGP peer - Internal Router 1",
+        "multihop": false,
+        "passive": true,
+        "enabled": true,
+        "import_policy": "internal-only",
+        "export_policy": "internal-only"
+      },
+      {
+        "name": "Customer-A",
+        "address": "172.16.1.2",
+        "remote_as": 65300,
+        "description": "Customer A downstream connection",
+        "multihop": false,
+        "passive": true,
+        "enabled": true,
+        "import_policy": "customer-routes",
+        "export_policy": "full-routes"
+      }
+    ],
+    "networks": [
+      {
+        "prefix": "203.0.113.0/24",
+        "description": "Primary public subnet",
+        "origin": "igp",
+        "community": ["65001:100", "65001:200"]
+      },
+      {
+        "prefix": "198.51.100.0/24",
+        "description": "Secondary public subnet",
+        "origin": "igp",
+        "community": ["65001:100"]
+      },
+      {
+        "prefix": "192.168.0.0/16",
+        "description": "Internal network aggregate",
+        "origin": "igp",
+        "community": ["65001:999", "no-export"]
+      }
+    ],
+    "routes": [
+      {
+        "prefix": "0.0.0.0/0",
+        "next_hop": "10.0.1.1",
+        "as_path": [65100, 174, 3356],
+        "origin": "igp",
+        "med": 100,
+        "local_pref": 200,
+        "community": ["65100:1000", "174:21000"],
+        "source": "ISP1-Primary",
+        "status": "active"
+      },
+      {
+        "prefix": "0.0.0.0/0",
+        "next_hop": "10.0.2.1",
+        "as_path": [65200, 1299, 3356],
+        "origin": "igp",
+        "med": 200,
+        "local_pref": 100,
+        "community": ["65200:1000", "1299:30000"],
+        "source": "ISP2-Backup",
+        "status": "backup"
+      },
+      {
+        "prefix": "8.8.8.0/24",
+        "next_hop": "10.0.1.1",
+        "as_path": [65100, 174, 15169],
+        "origin": "igp",
+        "med": 100,
+        "local_pref": 200,
+        "community": ["15169:13000"],
+        "source": "ISP1-Primary",
+        "status": "active"
+      },
+      {
+        "prefix": "1.1.1.0/24",
+        "next_hop": "10.0.2.1",
+        "as_path": [65200, 1299, 13335],
+        "origin": "igp",
+        "med": 150,
+        "local_pref": 150,
+        "community": ["13335:10000"],
+        "source": "ISP2-Backup",
+        "status": "active"
+      },
+      {
+        "prefix": "172.16.1.0/24",
+        "next_hop": "172.16.1.2",
+        "as_path": [65300],
+        "origin": "igp",
+        "med": 0,
+        "local_pref": 300,
+        "community": ["65001:300", "customer-route"],
+        "source": "Customer-A",
+        "status": "active"
+      },
+      {
+        "prefix": "10.10.0.0/16",
+        "next_hop": "192.168.10.2",
+        "as_path": [],
+        "origin": "igp",
+        "med": 0,
+        "local_pref": 400,
+        "community": ["65001:999", "internal"],
+        "source": "Internal-Router-1",
+        "status": "active"
+      }
+    ],
+    "policies": {
+      "import": {
+        "accept-all": {
+          "description": "Accept all routes from peer",
+          "rules": [
+            {
+              "match": "any",
+              "action": "accept"
+            }
+          ]
+        },
+        "internal-only": {
+          "description": "Accept only internal routes",
+          "rules": [
+            {
+              "match": {"as_path": "^$"},
+              "action": "accept"
+            },
+            {
+              "match": "any",
+              "action": "reject"
+            }
+          ]
+        },
+        "customer-routes": {
+          "description": "Accept customer advertised routes",
+          "rules": [
+            {
+              "match": {"prefix_list": "customer-prefixes"},
+              "action": "accept",
+              "set": {"local_pref": 300}
+            },
+            {
+              "match": "any",
+              "action": "reject"
+            }
+          ]
+        }
+      },
+      "export": {
+        "export-local": {
+          "description": "Export only local originated routes",
+          "rules": [
+            {
+              "match": {"origin": "local"},
+              "action": "accept"
+            },
+            {
+              "match": "any",
+              "action": "reject"
+            }
+          ]
+        },
+        "internal-only": {
+          "description": "Export all internal routes",
+          "rules": [
+            {
+              "match": {"community": "internal"},
+              "action": "accept"
+            },
+            {
+              "match": "any",
+              "action": "reject"
+            }
+          ]
+        },
+        "full-routes": {
+          "description": "Export full routing table to customers",
+          "rules": [
+            {
+              "match": "any",
+              "action": "accept"
+            }
+          ]
+        }
+      }
+    },
+    "monitoring": {
+      "thresholds": {
+        "route_count_min": 100,
+        "route_count_max": 1000000,
+        "prefix_limit_warning": 900000,
+        "flap_threshold": 10,
+        "flap_window": 300
+      },
+      "alerts": {
+        "peer_down": true,
+        "route_limit_exceeded": true,
+        "route_flapping": true,
+        "prefix_hijack": true
+      },
+      "collection_interval": 60,
+      "api_endpoints": {
+        "bgp_summary": "/api/routing/bgp/summary",
+        "bgp_routes": "/api/routing/bgp/routes",
+        "bgp_peers": "/api/routing/bgp/peers"
+      }
+    }
+  },
+  "test_scenarios": [
+    {
+      "name": "Peer ISP1 goes down",
+      "description": "Simulate primary ISP connection failure",
+      "events": [
+        {
+          "time": 0,
+          "action": "peer_down",
+          "target": "ISP1-Primary"
+        },
+        {
+          "time": 30,
+          "action": "withdraw_routes",
+          "source": "ISP1-Primary"
+        }
+      ]
+    },
+    {
+      "name": "Route flapping detection",
+      "description": "Simulate route instability",
+      "events": [
+        {
+          "time": 0,
+          "action": "announce",
+          "prefix": "192.0.2.0/24",
+          "source": "ISP2-Backup"
+        },
+        {
+          "time": 10,
+          "action": "withdraw",
+          "prefix": "192.0.2.0/24",
+          "source": "ISP2-Backup"
+        },
+        {
+          "time": 20,
+          "action": "announce",
+          "prefix": "192.0.2.0/24",
+          "source": "ISP2-Backup"
+        },
+        {
+          "time": 30,
+          "action": "withdraw",
+          "prefix": "192.0.2.0/24",
+          "source": "ISP2-Backup"
+        }
+      ]
+    },
+    {
+      "name": "Prefix hijack attempt",
+      "description": "Simulate unauthorized announcement of owned prefix",
+      "events": [
+        {
+          "time": 0,
+          "action": "announce",
+          "prefix": "203.0.113.0/24",
+          "source": "ISP2-Backup",
+          "as_path": [65200, 666666],
+          "suspicious": true
+        }
+      ]
+    }
+  ],
+  "nxos_commands": {
+    "show_bgp_summary": "show bgp all summary",
+    "show_bgp_routes": "show bgp all",
+    "show_bgp_peers": "show bgp all neighbors",
+    "show_bgp_detail": "show bgp all detail",
+    "show_route_table": "show ip route bgp",
+    "show_bgp_community": "show bgp all community",
+    "show_bgp_dampening": "show bgp all dampening",
+    "show_bgp_flap_statistics": "show bgp all flap-statistics"
+  }
+}

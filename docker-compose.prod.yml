@@ -1,0 +1,127 @@
+version: '3.8'
+
+services:
+  # Route poller - collects routing data from devices
+  poller:
+    build: .
+    container_name: route-poller
+    env_file: .env
+    volumes:
+      - ./route_snaps:/app/route_snaps
+      - ./poller.py:/app/poller.py:ro
+    networks:
+      - route-monitor
+    restart: always
+    command: python poller.py
+    healthcheck:
+      test: ["CMD", "python", "-c", "import os; exit(0 if os.path.exists('/app/route_snaps') else 1)"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+
+  # Prometheus exporter
+  exporter:
+    build: .
+    container_name: route-exporter
+    env_file: .env
+    ports:
+      - "9108:9108"
+    volumes:
+      - ./route_snaps:/app/route_snaps:ro
+    networks:
+      - route-monitor
+    restart: always
+    command: python exporter.py
+    depends_on:
+      - poller
+    healthcheck:
+      test: ["CMD", "python", "-c", "import requests; requests.get('http://localhost:9108/metrics')"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+
+  # API server
+  api:
+    build: .
+    container_name: route-api
+    env_file: .env
+    volumes:
+      - ./route_snaps:/app/route_snaps:ro
+      - ./webui:/app/webui:ro
+    networks:
+      - route-monitor
+    restart: always
+    command: uvicorn webui:app --host 0.0.0.0 --port 5000 --workers 2
+    depends_on:
+      - poller
+    healthcheck:
+      test: ["CMD", "python", "-c", "import requests; requests.get('http://localhost:5000/api/health')"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+
+  # Nginx reverse proxy and static file server
+  nginx:
+    image: nginx:alpine
+    container_name: route-nginx
+    ports:
+      - "80:80"
+    volumes:
+      - ./webui:/usr/share/nginx/html:ro
+      - ./nginx.conf:/etc/nginx/conf.d/default.conf:ro
+    networks:
+      - route-monitor
+    restart: always
+    depends_on:
+      - api
+    healthcheck:
+      test: ["CMD", "wget", "--quiet", "--tries=1", "--spider", "http://localhost/"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+
+  # Optional: Prometheus for metrics collection
+  prometheus:
+    image: prom/prometheus:latest
+    container_name: route-prometheus
+    ports:
+      - "9090:9090"
+    volumes:
+      - ./prometheus.yml:/etc/prometheus/prometheus.yml:ro
+      - prometheus-data:/prometheus
+    networks:
+      - route-monitor
+    restart: always
+    command:
+      - '--config.file=/etc/prometheus/prometheus.yml'
+      - '--storage.tsdb.path=/prometheus'
+      - '--storage.tsdb.retention.time=30d'
+    depends_on:
+      - exporter
+
+  # Optional: Grafana for visualization
+  grafana:
+    image: grafana/grafana:latest
+    container_name: route-grafana
+    ports:
+      - "3000:3000"
+    volumes:
+      - grafana-data:/var/lib/grafana
+      - ./grafana/dashboards:/etc/grafana/provisioning/dashboards:ro
+      - ./grafana/datasources:/etc/grafana/provisioning/datasources:ro
+    environment:
+      - GF_SECURITY_ADMIN_PASSWORD=${GRAFANA_PASSWORD:-admin}
+      - GF_INSTALL_PLUGINS=grafana-piechart-panel
+    networks:
+      - route-monitor
+    restart: always
+    depends_on:
+      - prometheus
+
+networks:
+  route-monitor:
+    driver: bridge
+
+volumes:
+  prometheus-data:
+  grafana-data:

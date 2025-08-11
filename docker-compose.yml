@@ -1,0 +1,100 @@
+version: '3.8'
+
+services:
+  # Route poller - collects routing data from devices
+  poller:
+    build: .
+    container_name: route-poller
+    environment:
+      - SNAPDIR=/app/route_snaps
+      - POLL_INTERVAL_SEC=${POLL_INTERVAL_SEC:-60}
+      - USE_NETBOX=${USE_NETBOX:-false}
+      - NB_URL=${NB_URL}
+      - NB_TOKEN=${NB_TOKEN}
+      - NETOPS_USER=${NETOPS_USER}
+      - NETOPS_PASS=${NETOPS_PASS}
+      - USE_NXAPI=${USE_NXAPI:-false}
+      - NXAPI_SCHEME=${NXAPI_SCHEME:-https}
+      - NXAPI_PORT=${NXAPI_PORT:-443}
+      - NXAPI_VERIFY=${NXAPI_VERIFY:-false}
+    volumes:
+      # Persistent storage for route snapshots
+      - ./route_snaps:/app/route_snaps
+      # Mount device configuration if using custom poller.py
+      - ./poller.py:/app/poller.py:ro
+      # Mount .env for additional configs
+      - ./.env:/app/.env:ro
+    networks:
+      - route-monitor
+    restart: unless-stopped
+    command: python poller.py
+
+  # Prometheus exporter
+  exporter:
+    build: .
+    container_name: route-exporter
+    environment:
+      - SNAPDIR=/app/route_snaps
+      - PROM_PORT=${PROM_PORT:-9108}
+    ports:
+      - "9108:9108"
+    volumes:
+      # Share the same snapshots directory
+      - ./route_snaps:/app/route_snaps:ro
+    networks:
+      - route-monitor
+    restart: unless-stopped
+    command: python exporter.py
+
+  # API server for web UI
+  api:
+    build: .
+    container_name: route-api
+    environment:
+      - SNAPDIR=/app/route_snaps
+    ports:
+      - "5000:5000"
+    volumes:
+      # Read-only access to snapshots
+      - ./route_snaps:/app/route_snaps:ro
+      # Mount web UI files
+      - ./webui:/app/webui:ro
+    networks:
+      - route-monitor
+    restart: unless-stopped
+    command: uvicorn webui:app --host 0.0.0.0 --port 5000
+
+  # Optional: Standalone web server for UI (if not using API's static serving)
+  # webui:
+  #   image: nginx:alpine
+  #   container_name: route-webui
+  #   ports:
+  #     - "8080:80"
+  #   volumes:
+  #     - ./webui:/usr/share/nginx/html:ro
+  #     - ./nginx.conf:/etc/nginx/conf.d/default.conf:ro
+  #   networks:
+  #     - route-monitor
+  #   restart: unless-stopped
+
+  # Optional: PostgreSQL for future enhancements
+  # postgres:
+  #   image: postgres:15-alpine
+  #   container_name: route-db
+  #   environment:
+  #     - POSTGRES_DB=routemonitor
+  #     - POSTGRES_USER=routemonitor
+  #     - POSTGRES_PASSWORD=${DB_PASSWORD:-changeme}
+  #   volumes:
+  #     - postgres-data:/var/lib/postgresql/data
+  #   networks:
+  #     - route-monitor
+  #   restart: unless-stopped
+
+networks:
+  route-monitor:
+    driver: bridge
+
+# Named volumes for optional services
+volumes:
+  postgres-data:

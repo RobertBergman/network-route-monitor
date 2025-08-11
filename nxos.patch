@@ -1,0 +1,356 @@
+*** a/requirements.txt
+--- b/requirements.txt
+@@
+ netmiko>=4.3
+ pyats[full]>=24.7
+ genie.libs.parser>=24.7
+ 
+ # Metrics & env
+ prometheus_client>=0.20
+ python-dotenv>=1.0
+ 
+ # Optional NetBox inventory
+ pynetbox>=7.3
+ 
+ # Utils
+ ujson>=5.10
++requests>=2.32    # NX-API (optional)
+
+*** a/.env.example
+--- b/.env.example
+@@
+ SNAPDIR=./route_snaps
+@@
+ PROM_PORT=9108
+@@
+ NETOPS_USER=netops
+ NETOPS_PASS=changeme
+@@
+ USE_NETBOX=false
+ NB_URL=https://netbox.example.com
+ NB_TOKEN=xxxxxxx
++
++# --- NX-OS / NX-API options ---
++# When true, use NX-API JSON for NX-OS devices (faster, stable)
++USE_NXAPI=false
++# If empty, defaults to https on port 443 to https://<host>/ins
++NXAPI_SCHEME=https
++NXAPI_PORT=443
++# Optional: disable TLS verify for lab gear (not recommended in prod)
++NXAPI_VERIFY=false
+
+*** a/inventory_netbox.py
+--- b/inventory_netbox.py
+@@
+-    for d in nb.dcim.devices.filter(status="active"):
+-        # Use role or tag filter to limit to routers
+-        if getattr(d.role, "slug", "") not in {"router", "core-router", "edge-router"}:
+-            continue
++    # Prefer network boxes that are routers or Nexus switches
++    for d in nb.dcim.devices.filter(status="active"):
++        role_slug = getattr(d.role, "slug", "") or ""
++        tags = {t.slug for t in (getattr(d, "tags", []) or [])}
++        if role_slug not in {"router", "core-router", "edge-router"} and "nexus" not in tags:
++            # keep only explicitly network routing roles or tagged Nexus
++            continue
+ 
+         if not d.primary_ip:
+             continue
+         host = d.primary_ip.address.split("/")[0]
+@@
+-        device_type = "cisco_nxos" if "Nexus" in (getattr(d.device_type, "display", "") or "") else "cisco_xe"
++        # Heuristic: any model with "Nexus" goes NX-OS device_type
++        disp = (getattr(d.device_type, "display", "") or "") + " " + (getattr(d.device_type, "model", "") or "")
++        device_type = "cisco_nxos" if "Nexus" in disp or "NX" in disp else "cisco_xe"
+ 
+         yield {
+             "device_type": device_type,
+             "host": host,
+             "username": os.environ.get("NETOPS_USER"),
+             "password": os.environ.get("NETOPS_PASS"),
+             "name": d.name,
+             "vrfs": vrfs,
+             "afis": ["ipv4", "ipv6"],
+         }
+
+*** a/parsers.py
+--- b/parsers.py
+@@
+-from typing import List, Dict, Optional, Set
++from typing import List, Dict, Optional, Set
+ from netmiko import ConnectHandler
+ from genie.conf.base import Device as GenieDevice
+ from models import RIBEntry, BGPEntry, NH, AFI4, AFI6, normalize_communities, set_hash
++import os
++import requests
+ 
+ def _try_json(conn, cmd: str) -> Optional[Dict]:
+     """
+     Try 'cmd | json'. If device rejects, return None.
+     """
+@@
+     except Exception:
+         pass
+     return None
+ 
++def _nxapi_request(host: str, username: str, password: str, cmds: List[str]) -> Optional[Dict]:
++    """
++    Use NX-API JSON to run one or more show commands and return the first response.
++    Requires NX-OS: feature nxapi (HTTP/HTTPS enabled, default /ins).
++    """
++    scheme = os.environ.get("NXAPI_SCHEME", "https")
++    port = os.environ.get("NXAPI_PORT", "443")
++    verify = os.environ.get("NXAPI_VERIFY", "false").lower() == "true"
++    url = f"{scheme}://{host}:{port}/ins"
++    payload = {
++        "ins_api": {
++            "version": "1.2",
++            "type": "cli_show",
++            "chunk": "0",
++            "sid": "1",
++            "input": " ; ".join(cmds),
++            "output_format": "json"
++        }
++    }
++    try:
++        r = requests.post(url, json=payload, auth=(username, password), timeout=8, verify=verify)
++        r.raise_for_status()
++        data = r.json()
++        # NX-API wraps responses; pick the first
++        if isinstance(data, dict) and "ins_api" in data:
++            body = data["ins_api"].get("outputs", {}).get("output")
++            if isinstance(body, list) and body:
++                return body[0].get("body")
++            if isinstance(body, dict):
++                return body.get("body") or body
++        return None
++    except Exception:
++        return None
++
+ def _parse_with_genie(device_name: str, device_os: str, cmd: str, raw: str) -> Dict:
+@@
+     return gdev.parse(cmd, output=raw)
+ 
+-def fetch_parsed(conn, device_name: str, device_os: str, cmd: str) -> Dict:
++def fetch_parsed(conn, device_name: str, device_os: str, cmd: str, dev: Dict) -> Dict:
+     """
+-    Fetch output using JSON if possible, else fallback to Genie.
++    Fetch output using JSON if possible; prefer NX-API for NX-OS when enabled;
++    else fallback to Genie parse.
+     """
+-    j = _try_json(conn, cmd)
+-    if j is not None:
+-        return j
+-    raw = conn.send_command(cmd, use_textfsm=False)
+-    return _parse_with_genie(device_name, device_os, cmd, raw)
++    # NX-OS first: NX-API (optional)
++    if device_os == "nxos" and os.environ.get("USE_NXAPI", "false").lower() == "true":
++        j = _nxapi_request(dev["host"], dev["username"], dev["password"], [cmd])
++        if j:
++            return j
++    # Next: try ' | json'
++    j = _try_json(conn, cmd)
++    if j is not None:
++        return j
++    # Fallback: raw + Genie
++    raw = conn.send_command(cmd, use_textfsm=False)
++    return _parse_with_genie(device_name, device_os, cmd, raw)
+@@
+-def parse_rib(device_name: str, device_os: str, vrf: str, afi: str, parsed: Dict) -> List[RIBEntry]:
++def parse_rib(device_name: str, device_os: str, vrf: str, afi: str, parsed: Dict) -> List[RIBEntry]:
+@@
+-    vrfs = parsed.get("vrf") or parsed.get("TABLE_vrf") or {}
+-    if "vrf" in parsed:
++    vrfs = parsed.get("vrf") or parsed.get("TABLE_vrf") or {}
++    if "vrf" in parsed:
+         af_container = parsed["vrf"].get(vrf, {}).get("address_family", {})
+         af_key = afi
+         routes = af_container.get(af_key, {}).get("routes", {})
+         for pfx, pdata in routes.items():
+@@
+-    # If nothing parsed, try a couple JSON variations (vendor specific) here.
+-    # (Left minimal; most XE/NX-OS will be handled above.)
++    # NX-API/NX-OS alternative JSON shapes (common on some releases)
++    if not entries and "TABLE_vrf" in parsed:
++        table_vrf = parsed.get("TABLE_vrf", {})
++        for v in table_vrf.get("ROW_vrf", [] if isinstance(table_vrf.get("ROW_vrf"), list) else [table_vrf.get("ROW_vrf")]):
++            if v.get("vrf-name-out") != vrf:
++                continue
++            # IPv4/IPv6 may present as separate tables
++            table_af = v.get("TABLE_addrf") or {}
++            for row_af in (table_af.get("ROW_addrf") or []):
++                af_n = row_af.get("addrf")
++                if (afi == AFI4 and "ipv4" not in af_n) or (afi == AFI6 and "ipv6" not in af_n):
++                    continue
++                routes = row_af.get("TABLE_prefix", {})
++                rows = routes.get("ROW_prefix") or []
++                if isinstance(rows, dict):
++                    rows = [rows]
++                for r in rows:
++                    pfx = r.get("ipprefix") or r.get("ip_prefix")
++                    proto = r.get("ubest-source") or r.get("route-source") or ""
++                    dist = r.get("ubest-distance") or r.get("distance")
++                    met  = r.get("ubest-metric") or r.get("metric")
++                    best = True if r.get("ubest") in ("true", True, 1) else False
++                    nhs = set()
++                    nhtable = r.get("TABLE_paths", {}).get("ROW_paths") or []
++                    if isinstance(nhtable, dict):
++                        nhtable = [nhtable]
++                    for nh in nhtable:
++                        nhs.add(NH(nh=nh.get("ipprefix") or nh.get("nh_addr"), iface=nh.get("ifname")))
++                    if pfx:
++                        e = RIBEntry(
++                            device=device_name, vrf=vrf, afi=afi, prefix=pfx, protocol=proto,
++                            distance=dist, metric=met, best=best, nexthops=nhs
++                        )
++                        entries.setdefault(e.key(), e)
+     return list(entries.values())
+@@
+-    if "vrf" in parsed:
++    if "vrf" in parsed:
+         bgp = parsed["vrf"].get(vrf, {}).get("address_family", {}).get(af_key, {})
+         routes = bgp.get("routes", {})
+         for pfx, pdata in routes.items():
+             idx = pdata.get("index", {})
+             for _, path in idx.items():
+@@
+-    return out
++    # NX-API/NX-OS alternative JSON shapes
++    if not out and "TABLE_vrf" in parsed:
++        table_vrf = parsed.get("TABLE_vrf", {})
++        rows = table_vrf.get("ROW_vrf") or []
++        if isinstance(rows, dict):
++            rows = [rows]
++        for v in rows:
++            if v.get("vrf-name-out") != vrf:
++                continue
++            table_af = v.get("TABLE_af") or {}
++            afrows = table_af.get("ROW_af") or []
++            if isinstance(afrows, dict):
++                afrows = [afrows]
++            for af in afrows:
++                if (afi == AFI4 and af.get("af") != "ipv4 unicast") or (afi == AFI6 and af.get("af") != "ipv6 unicast"):
++                    continue
++                table_r = af.get("TABLE_prefix") or {}
++                rrows = table_r.get("ROW_prefix") or []
++                if isinstance(rrows, dict):
++                    rrows = [rrows]
++                for r in rrows:
++                    pfx = r.get("prefix")
++                    paths = r.get("TABLE_path", {}).get("ROW_path") or []
++                    if isinstance(paths, dict):
++                        paths = [paths]
++                    for path in paths:
++                        comms = normalize_communities(path.get("community"))
++                        out.append(BGPEntry(
++                            device=device_name, vrf=vrf, afi=afi, prefix=pfx,
++                            best=True if path.get("best") in ("true", True, 1) else False,
++                            nh=path.get("nexthop") or path.get("nh"),
++                            as_path=path.get("aspath") or "",
++                            local_pref=path.get("localpref"),
++                            med=path.get("metric") or path.get("med"),
++                            origin=path.get("origin"),
++                            communities=comms[:256],
++                            communities_hash=set_hash(comms),
++                            weight=path.get("weight"),
++                            peer=path.get("neighbor_id") or path.get("peer"),
++                            originator_id=path.get("originator_id"),
++                            cluster_list=path.get("clusterlist") if isinstance(path.get("clusterlist"), list) else None,
++                        ))
++    return out
+@@
+-def collect_device_tables(dev: Dict, vrfs: List[str], afis: List[str]) -> Dict:
++def collect_device_tables(dev: Dict, vrfs: List[str], afis: List[str]) -> Dict:
+@@
+-                try:
+-                    parsed = fetch_parsed(conn, device_name, device_os, rib_cmd)
++                try:
++                    parsed = fetch_parsed(conn, device_name, device_os, rib_cmd, dev)
+                     rib_all.extend(parse_rib(device_name, device_os, vrf, afi, parsed))
+                 except Exception:
+                     # swallow per-table errors to keep other tables flowing
+                     pass
+@@
+-                try:
+-                    parsed = fetch_parsed(conn, device_name, device_os, bgp_cmd)
++                try:
++                    parsed = fetch_parsed(conn, device_name, device_os, bgp_cmd, dev)
+                     bgp_all.extend(parse_bgp(device_name, device_os, vrf, afi, parsed))
+                 except Exception:
+                     pass
+
+*** a/poller.py
+--- b/poller.py
+@@
+ STATIC_DEVICES = [
+-    {"device_type":"cisco_xe","host":"10.0.0.1","username":os.environ.get("NETOPS_USER"),
+-     "password":os.environ.get("NETOPS_PASS"),"name":"edge-xe-1"},
+-    {"device_type":"cisco_nxos","host":"10.0.0.2","username":os.environ.get("NETOPS_USER"),
+-     "password":os.environ.get("NETOPS_PASS"),"name":"dc-nx-1"},
++    # Default to NX-OS heavy environment
++    {"device_type":"cisco_nxos","host":"10.0.0.2","username":os.environ.get("NETOPS_USER"),
++     "password":os.environ.get("NETOPS_PASS"),"name":"dc-nx-1"},
++    {"device_type":"cisco_nxos","host":"10.0.0.3","username":os.environ.get("NETOPS_USER"),
++     "password":os.environ.get("NETOPS_PASS"),"name":"agg-nx-1"},
+ ]
+@@
+-            # Diff archives (compact)
++            # Diff archives (compact)
+             diff_payload = {"device": device, "vrf": vrf, "afi": afi, "rib": rib_d, "bgp": bgp_d}
+             write_gz(os.path.join(diffs_dir(SNAPDIR, device), f"{vrf}.{afi}.{time.strftime('%Y%m%d%H%M%S', time.gmtime())}.json.gz"), diff_payload)
+ 
+             report["vrfs"].setdefault(vrf, {})[afi] = diff_payload
+ 
+     return report
+
+*** a/exporter.py
+--- b/exporter.py
+@@
+-from poller import get_inventory, collect_and_persist_for_device
++from poller import get_inventory, collect_and_persist_for_device
++from storage import latest_path, read_latest
+ 
+@@
+-            # Gauges
+-            # RIB count: count unique prefixes
+-            try:
+-                rib_count = len({(e["prefix"], e["protocol"]) for e in rib.get("adds", []) + rib.get("rems", []) + rib.get("chgs", [])})
+-            except Exception:
+-                rib_count = 0
++            # Gauges
++            # RIB count: use current latest snapshot for accuracy
++            try:
++                rib_latest = latest_path(os.environ.get("SNAPDIR","./route_snaps"), device, "rib", vrf, afi)
++                rib_snap = read_latest(rib_latest) or []
++                rib_count = len({(e["prefix"], e["protocol"]) for e in rib_snap})
++            except Exception:
++                rib_count = 0
+             ROUTE_COUNT.labels(device=device, vrf=vrf, afi=afi).set(rib_count)
+ 
+-            # BGP best count: number of best entries in current snapshot is not included in diff payload.
+-            # We approximate via chg/adds if needed; better to parse latest file in a future enhancement.
+-            best_count = 0
++            # BGP best count: read from latest snapshot
++            try:
++                bgp_latest = latest_path(os.environ.get("SNAPDIR","./route_snaps"), device, "bgp", vrf, afi)
++                bgp_snap = read_latest(bgp_latest) or []
++                best_count = sum(1 for e in bgp_snap if e.get("best"))
++            except Exception:
++                best_count = 0
+             BGP_BEST_COUNT.labels(device=device, vrf=vrf, afi=afi).set(best_count)
+ 
+             # Counters
+             RIB_ADDS.labels(device=device, vrf=vrf, afi=afi).inc(len(rib.get("adds", [])))
+             RIB_REMS.labels(device=device, vrf=vrf, afi=afi).inc(len(rib.get("rems", [])))
+ 
+             for chg in bgp.get("chgs", []):
+                 delta = chg.get("delta", {})
+                 for k in ("best","nh","as_path","local_pref","med","origin","communities_hash","peer"):
+                     if k in delta:
+                         BGP_ATTR_CHG.labels(device=device, vrf=vrf, afi=afi, attr=k).inc()
+                 if "upstream_as" in delta:
+                     UPSTREAM_AS_CHG.labels(device=device, vrf=vrf, afi=afi, prefix=chg.get("prefix","")).inc()
+ 
+                 if is_default(chg.get("prefix","")) and "nh" in delta:
+                     DEFAULT_NH_CHG.labels(device=device, vrf=vrf, afi=afi).inc()
+

@@ -1,0 +1,26 @@
+# Core
+netmiko>=4.3
+pyats[full]>=24.7
+genie.libs.parser>=24.7
+
+# Metrics & env
+prometheus_client>=0.20
+python-dotenv>=1.0
+
+# Optional NetBox inventory
+pynetbox>=7.3
+
+# Utils
+ujson>=5.10
+requests>=2.32    # NX-API (optional)
+
+# Web UI
+fastapi>=0.112
+uvicorn[standard]>=0.30
+
+# Testing
+pytest>=7.4
+pytest-cov>=4.1
+pytest-mock>=3.11
+pytest-asyncio>=0.21
+freezegun>=1.2

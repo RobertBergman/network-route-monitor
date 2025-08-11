@@ -1,0 +1,77 @@
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+build/
+develop-eggs/
+dist/
+downloads/
+eggs/
+.eggs/
+lib/
+lib64/
+parts/
+sdist/
+var/
+wheels/
+*.egg-info/
+.installed.cfg
+*.egg
+MANIFEST
+
+# Testing
+.coverage
+.pytest_cache/
+htmlcov/
+.tox/
+.nox/
+.hypothesis/
+*.cover
+.coverage.*
+
+# Virtual environments
+venv/
+ENV/
+env/
+.venv/
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+.DS_Store
+
+# Project specific
+route_snaps/
+*.log
+*.gz
+.env
+.env.local
+.env.*.local
+
+# Docker
+*.pid
+
+# Node (for frontend)
+node_modules/
+dist/
+.nuxt/
+.cache/
+
+# Temporary files
+*.tmp
+/tmp/
+debug_output.json
+test_output.txt
+/tmp/*
+
+# Credentials and secrets
+*.pem
+*.key
+*.crt
+*.pfx
+secrets/

@@ -1,0 +1,55 @@
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+venv/
+ENV/
+env/
+.venv
+
+# Testing
+.pytest_cache/
+.coverage
+htmlcov/
+.tox/
+tests/
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+
+# Git
+.git/
+.gitignore
+
+# Documentation
+*.md
+docs/
+
+# Environment files (will be mounted as volumes)
+.env
+.env.example
+
+# Data (will be mounted as volumes)
+route_snaps/
+
+# Temporary files
+*.log
+*.tmp
+/tmp/
+
+# Development files
+add_*.py
+remove_*.py
+cleanup_*.py
+configure_*.py
+debug_*.py
+test_*.py
+check_*.py
+demo_*.py
+final_*.py
