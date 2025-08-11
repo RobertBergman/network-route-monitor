@@ -82,8 +82,12 @@
 
   function combosFor(tableKind) {
     const combos = (state.deviceTables && state.deviceTables[tableKind]) || [];
-    // state.deviceTables[tableKind] is list of tuples but came through JSON -> arrays
-    return combos.map((t) => Array.isArray(t) ? t : [t[0], t[1]]);
+    // Handle both old format (arrays) and new DB format (objects with vrf/afi properties)
+    return combos.map((t) => {
+      if (Array.isArray(t)) return t;
+      if (t.vrf !== undefined && t.afi !== undefined) return [t.vrf, t.afi];
+      return [t[0], t[1]];
+    });
   }
 
   function updateVrfAfiOptions() {
@@ -170,11 +174,14 @@
       return;
     }
     const rows = items.map((e) => {
-      const title = `${e.vrf}.${e.afi}.${formatTs(e.ts)}`;
-      const size = (e.size || 0);
-      return `<div class="row" data-ts="${e.ts}">
+      // Handle both old format (ts) and new DB format (timestamp)
+      const ts = e.ts || e.timestamp;
+      const tsFormatted = ts ? formatTs(ts.replace(/[-:TZ]/g, '').slice(0, 14)) : 'Unknown';
+      const title = `${e.vrf}.${e.afi}.${tsFormatted}`;
+      const meta = e.summary ? `+${e.summary.added} -${e.summary.removed} ~${e.summary.changed}` : `${e.size || 0} B`;
+      return `<div class="row" data-ts="${ts}">
         <div class="title">${escapeHtml(title)}</div>
-        <div class="meta">${size} B</div>
+        <div class="meta">${escapeHtml(meta)}</div>
       </div>`;
     }).join("");
     els.diffList.innerHTML = `<div class="list">${rows}</div>`;
@@ -262,10 +269,13 @@
       return;
     }
     const rows = items.map((e) => {
-      const title = `${formatTs(e.ts)} (${e.name})`;
-      return `<div class="row" data-ts="${e.ts}">
-        <div class="title">${escapeHtml(title)}</div>
-        <div class="meta">${e.size} B</div>
+      // Handle both old format (ts, name, size) and new DB format (timestamp, table, vrf, afi)
+      const ts = e.ts || e.timestamp;
+      const displayName = e.name || `${e.table}/${e.vrf}/${e.afi}`;
+      const title = ts ? formatTs(ts.replace(/[-:TZ]/g, '').slice(0, 14)) : 'Unknown';
+      return `<div class="row" data-ts="${ts}">
+        <div class="title">${escapeHtml(title)} (${escapeHtml(displayName)})</div>
+        <div class="meta">${e.size || '-'} B</div>
       </div>`;
     }).join("");
     els.historyList.innerHTML = `<div class="list">${rows}</div>`;
@@ -287,18 +297,34 @@
   // Loaders
   async function loadHealth() {
     try {
-      const h = await api("/api/health");
-      setHealth(h.status, h.snapdir, h.devices);
+      // Try the database API endpoint first
+      const h = await api("/api/status");
+      // Map status response to health format
+      setHealth("healthy", "database", h.devices || 0);
     } catch (e) {
-      setHealth("error", "-", 0);
-      console.warn("Health check failed:", e);
+      // Fallback to old health endpoint for file-based system
+      try {
+        const h = await api("/api/health");
+        setHealth(h.status, h.snapdir, h.devices);
+      } catch (e2) {
+        setHealth("error", "-", 0);
+        console.warn("Health check failed:", e);
+      }
     }
   }
 
   async function loadDevices() {
+    console.log("Loading devices...");
     const d = await api("/api/devices");
-    state.devices = d.devices || [];
-    setOptions(els.device, state.devices, false);
+    console.log("API response:", d);
+    // Handle both array response and object with devices property
+    state.devices = Array.isArray(d) ? d : (d.devices || []);
+    console.log("State devices:", state.devices);
+    // Extract just the device names for the dropdown
+    const deviceNames = state.devices.map(dev => typeof dev === 'string' ? dev : (dev.name || dev));
+    console.log("Device names for dropdown:", deviceNames);
+    setOptions(els.device, deviceNames, false);
+    console.log("Dropdown options set");
   }
 
   async function loadDeviceTables() {
@@ -323,8 +349,9 @@
       afi: els.afi.value,
     });
     try {
-      const rows = await api(`/api/devices/${encodeURIComponent(els.device.value)}/latest?` + params.toString());
-      state.latestData = Array.isArray(rows) ? rows : [];
+      const response = await api(`/api/devices/${encodeURIComponent(els.device.value)}/latest?` + params.toString());
+      // Handle database API response format
+      state.latestData = response.routes ? response.routes : (Array.isArray(response) ? response : []);
       summarizeLatest(els.table.value, state.latestData);
       const filtered = filterRows(state.latestData, els.latestFilter.value);
       if (els.table.value === "rib") renderTableRIB(filtered);
@@ -349,7 +376,9 @@
     });
     try {
       const d = await api(`/api/devices/${encodeURIComponent(els.device.value)}/diffs?` + params.toString());
-      renderDiffList(d.items || []);
+      // Handle both old format (d.items) and new DB format (array directly)
+      const items = Array.isArray(d) ? d : (d.items || []);
+      renderDiffList(items);
       els.diffDetails.innerHTML = "";
     } catch (e) {
       els.diffList.innerHTML = `<div class="list"><div class="row"><span class="meta">Failed to load diffs: ${escapeHtml(e.message)}</span></div></div>`;
@@ -361,6 +390,7 @@
     const params = new URLSearchParams({
       vrf: els.vrf.value,
       afi: els.afi.value,
+      table: els.table.value  // Add table parameter for DB API
     });
     try {
       const d = await api(`/api/devices/${encodeURIComponent(els.device.value)}/diffs/${encodeURIComponent(ts)}?` + params.toString());
@@ -384,7 +414,9 @@
     });
     try {
       const d = await api(`/api/devices/${encodeURIComponent(els.device.value)}/history?` + params.toString());
-      renderHistoryList(d.items || []);
+      // Handle both old format (d.items) and new DB format (array directly)
+      const items = Array.isArray(d) ? d : (d.items || []);
+      renderHistoryList(items);
       els.historyDetails.innerHTML = "";
     } catch (e) {
       els.historyList.innerHTML = `<div class="list"><div class="row"><span class="meta">Failed to load history: ${escapeHtml(e.message)}</span></div></div>`;
@@ -399,8 +431,11 @@
       afi: els.afi.value,
     });
     try {
-      const rows = await api(`/api/devices/${encodeURIComponent(els.device.value)}/history/${encodeURIComponent(ts)}?` + params.toString());
-      const data = Array.isArray(rows) ? rows : [];
+      // Use snapshot endpoint for DB-based system
+      const endpoint = ts.includes('-') ? 'snapshot' : 'history';
+      const response = await api(`/api/devices/${encodeURIComponent(els.device.value)}/${endpoint}/${encodeURIComponent(ts)}?` + params.toString());
+      // Handle both formats
+      const data = response.routes ? response.routes : (Array.isArray(response) ? response : []);
       renderHistoryDetails(els.table.value, data);
     } catch (e) {
       els.historyDetails.innerHTML = `<div class="badge warn">Failed to load archive: ${escapeHtml(e.message)}</div>`;
@@ -467,14 +502,19 @@
 
   // Boot
   (async function init() {
+    console.log("Initializing app...");
     await loadHealth();
+    console.log("Health loaded");
     await loadDevices();
+    console.log("Devices loaded, count:", state.devices.length);
     if (state.devices.length) {
+      console.log("Loading device tables for first device...");
       await loadDeviceTables();
       await loadLatest();
       await loadDiffIndex();
       await loadHistoryIndex();
     } else {
+      console.log("No devices found");
       els.latestSummary.innerHTML = `<span class="badge warn">No devices found under SNAPDIR.</span>`;
     }
   })();

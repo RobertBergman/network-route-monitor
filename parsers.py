@@ -287,8 +287,16 @@ def collect_device_tables(dev: Dict, vrfs: List[str], afis: List[str]) -> Dict:
     device_name = dev.get("name", dev.get("host", "unknown"))
     device_os = "iosxe" if "xe" in dev["device_type"] else "nxos"
 
-    # Create connection dict without 'name', 'vrfs', or 'afis' fields
-    conn_params = {k: v for k, v in dev.items() if k not in ["name", "vrfs", "afis"]}
+    # Create connection dict with only netmiko-compatible fields
+    netmiko_fields = ["host", "hostname", "device_type", "username", "password", "port", 
+                      "secret", "verbose", "session_log", "timeout", "auth_timeout", 
+                      "banner_timeout", "conn_timeout", "fast_cli"]
+    conn_params = {k: v for k, v in dev.items() if k in netmiko_fields}
+    
+    # Map hostname to host if needed
+    if "hostname" in conn_params and "host" not in conn_params:
+        conn_params["host"] = conn_params.pop("hostname")
+    
     conn = ConnectHandler(**conn_params)
     rib_all: List[RIBEntry] = []
     bgp_all: List[BGPEntry] = []

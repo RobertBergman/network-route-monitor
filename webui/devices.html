@@ -1,0 +1,313 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <title>Device Management - Route Monitor</title>
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <link rel="stylesheet" href="styles.css" />
+  <style>
+    .device-grid {
+      display: grid;
+      grid-template-columns: repeat(auto-fill, minmax(350px, 1fr));
+      gap: 1rem;
+      padding: 1rem;
+    }
+    .device-card {
+      background: rgba(0, 20, 40, 0.8);
+      border: 1px solid rgba(0, 136, 204, 0.3);
+      border-radius: 8px;
+      padding: 1rem;
+      position: relative;
+    }
+    .device-card h3 {
+      margin: 0 0 0.5rem 0;
+      color: #00aaff;
+    }
+    .device-info {
+      display: grid;
+      gap: 0.5rem;
+      margin-bottom: 1rem;
+    }
+    .device-info-row {
+      display: flex;
+      justify-content: space-between;
+    }
+    .device-info-label {
+      color: #6699cc;
+    }
+    .device-info-value {
+      color: #fff;
+      font-family: monospace;
+    }
+    .device-actions {
+      display: flex;
+      gap: 0.5rem;
+      justify-content: flex-end;
+    }
+    .device-status {
+      position: absolute;
+      top: 1rem;
+      right: 1rem;
+      padding: 0.25rem 0.5rem;
+      border-radius: 4px;
+      font-size: 0.8rem;
+    }
+    .device-status.enabled {
+      background: rgba(0, 204, 102, 0.2);
+      color: #00cc66;
+      border: 1px solid #00cc66;
+    }
+    .device-status.disabled {
+      background: rgba(204, 0, 0, 0.2);
+      color: #cc3333;
+      border: 1px solid #cc3333;
+    }
+    .modal {
+      display: none;
+      position: fixed;
+      z-index: 1000;
+      left: 0;
+      top: 0;
+      width: 100%;
+      height: 100%;
+      background-color: rgba(0, 0, 0, 0.8);
+    }
+    .modal.show {
+      display: flex;
+      align-items: center;
+      justify-content: center;
+    }
+    .modal-content {
+      background: #001428;
+      border: 1px solid #0088cc;
+      border-radius: 8px;
+      padding: 2rem;
+      width: 90%;
+      max-width: 500px;
+    }
+    .modal-header {
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      margin-bottom: 1.5rem;
+    }
+    .modal-header h2 {
+      margin: 0;
+      color: #00aaff;
+    }
+    .close-btn {
+      background: none;
+      border: none;
+      color: #6699cc;
+      font-size: 1.5rem;
+      cursor: pointer;
+    }
+    .form-group {
+      margin-bottom: 1rem;
+    }
+    .form-group label {
+      display: block;
+      margin-bottom: 0.25rem;
+      color: #6699cc;
+    }
+    .form-group input, .form-group select {
+      width: 100%;
+      padding: 0.5rem;
+      background: rgba(0, 40, 80, 0.6);
+      border: 1px solid rgba(0, 136, 204, 0.5);
+      color: #fff;
+      border-radius: 4px;
+    }
+    .form-group input:focus, .form-group select:focus {
+      outline: none;
+      border-color: #00aaff;
+      background: rgba(0, 40, 80, 0.8);
+    }
+    .form-checkbox {
+      display: flex;
+      align-items: center;
+      gap: 0.5rem;
+    }
+    .form-checkbox input {
+      width: auto;
+    }
+    .form-actions {
+      display: flex;
+      gap: 1rem;
+      justify-content: flex-end;
+      margin-top: 1.5rem;
+    }
+    .btn {
+      padding: 0.5rem 1rem;
+      border-radius: 4px;
+      border: 1px solid;
+      cursor: pointer;
+      font-size: 0.9rem;
+      transition: all 0.2s;
+    }
+    .btn-primary {
+      background: rgba(0, 136, 204, 0.2);
+      border-color: #0088cc;
+      color: #00aaff;
+    }
+    .btn-primary:hover {
+      background: rgba(0, 136, 204, 0.4);
+    }
+    .btn-success {
+      background: rgba(0, 204, 102, 0.2);
+      border-color: #00cc66;
+      color: #00cc66;
+    }
+    .btn-success:hover {
+      background: rgba(0, 204, 102, 0.4);
+    }
+    .btn-danger {
+      background: rgba(204, 0, 0, 0.2);
+      border-color: #cc3333;
+      color: #ff6666;
+    }
+    .btn-danger:hover {
+      background: rgba(204, 0, 0, 0.4);
+    }
+    .btn-cancel {
+      background: rgba(102, 102, 102, 0.2);
+      border-color: #666;
+      color: #999;
+    }
+    .btn-cancel:hover {
+      background: rgba(102, 102, 102, 0.4);
+    }
+    .add-device-btn {
+      position: fixed;
+      bottom: 2rem;
+      right: 2rem;
+      width: 60px;
+      height: 60px;
+      border-radius: 50%;
+      background: rgba(0, 136, 204, 0.3);
+      border: 2px solid #0088cc;
+      color: #00aaff;
+      font-size: 2rem;
+      cursor: pointer;
+      transition: all 0.3s;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+    }
+    .add-device-btn:hover {
+      background: rgba(0, 136, 204, 0.5);
+      transform: scale(1.1);
+    }
+    .error-message {
+      background: rgba(204, 0, 0, 0.2);
+      border: 1px solid #cc3333;
+      color: #ff6666;
+      padding: 0.5rem;
+      border-radius: 4px;
+      margin-bottom: 1rem;
+    }
+    .success-message {
+      background: rgba(0, 204, 102, 0.2);
+      border: 1px solid #00cc66;
+      color: #00cc66;
+      padding: 0.5rem;
+      border-radius: 4px;
+      margin-bottom: 1rem;
+    }
+  </style>
+</head>
+<body>
+  <header class="topbar">
+    <h1>Device Management</h1>
+    <div class="status">
+      <a href="index.html" style="color: #6699cc; text-decoration: none;">← Back to Monitor</a>
+    </div>
+  </header>
+
+  <div id="messageArea"></div>
+  
+  <div class="device-grid" id="deviceGrid">
+    <!-- Device cards will be inserted here -->
+  </div>
+
+  <button class="add-device-btn" id="addDeviceBtn" title="Add Device">+</button>
+
+  <!-- Add/Edit Device Modal -->
+  <div id="deviceModal" class="modal">
+    <div class="modal-content">
+      <div class="modal-header">
+        <h2 id="modalTitle">Add Device</h2>
+        <button class="close-btn" id="closeModalBtn">&times;</button>
+      </div>
+      <form id="deviceForm">
+        <div class="form-group">
+          <label for="deviceName">Device Name *</label>
+          <input type="text" id="deviceName" required placeholder="e.g., router-01" />
+        </div>
+        <div class="form-group">
+          <label for="deviceHostname">Hostname/IP *</label>
+          <input type="text" id="deviceHostname" required placeholder="e.g., 192.168.1.1" />
+        </div>
+        <div class="form-group">
+          <label for="deviceType">Device Type *</label>
+          <select id="deviceType" required>
+            <option value="">Select device type...</option>
+            <option value="cisco_ios">Cisco IOS</option>
+            <option value="cisco_xe">Cisco IOS-XE</option>
+            <option value="cisco_xr">Cisco IOS-XR</option>
+            <option value="cisco_nxos">Cisco NX-OS</option>
+            <option value="arista_eos">Arista EOS</option>
+            <option value="juniper_junos">Juniper Junos</option>
+          </select>
+        </div>
+        <div class="form-group">
+          <label for="deviceUsername">Username *</label>
+          <input type="text" id="deviceUsername" required placeholder="e.g., admin" />
+        </div>
+        <div class="form-group">
+          <label for="devicePassword">Password *</label>
+          <input type="password" id="devicePassword" placeholder="Leave blank to keep current" />
+        </div>
+        <div class="form-group">
+          <label for="devicePort">SSH Port</label>
+          <input type="number" id="devicePort" value="22" min="1" max="65535" />
+        </div>
+        <div class="form-group">
+          <div class="form-checkbox">
+            <input type="checkbox" id="deviceEnabled" checked />
+            <label for="deviceEnabled">Enabled</label>
+          </div>
+        </div>
+        <div class="form-group">
+          <div class="form-checkbox">
+            <input type="checkbox" id="deviceNxapi" />
+            <label for="deviceNxapi">Use NX-API (NX-OS only)</label>
+          </div>
+        </div>
+        <div class="form-actions">
+          <button type="button" class="btn btn-cancel" id="cancelBtn">Cancel</button>
+          <button type="submit" class="btn btn-success" id="saveBtn">Save</button>
+        </div>
+      </form>
+    </div>
+  </div>
+
+  <!-- Delete Confirmation Modal -->
+  <div id="deleteModal" class="modal">
+    <div class="modal-content">
+      <div class="modal-header">
+        <h2>Confirm Delete</h2>
+        <button class="close-btn" id="closeDeleteModalBtn">&times;</button>
+      </div>
+      <p>Are you sure you want to delete device <strong id="deleteDeviceName"></strong>?</p>
+      <p style="color: #cc3333;">This action cannot be undone.</p>
+      <div class="form-actions">
+        <button type="button" class="btn btn-cancel" id="cancelDeleteBtn">Cancel</button>
+        <button type="button" class="btn btn-danger" id="confirmDeleteBtn">Delete</button>
+      </div>
+    </div>
+  </div>
+
+  <script src="devices.js"></script>
+</body>
+</html>

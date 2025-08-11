@@ -1,0 +1,199 @@
+version: '3.8'
+
+services:
+  # PostgreSQL database
+  postgres:
+    image: postgres:15-alpine
+    container_name: route-db
+    environment:
+      - POSTGRES_DB=routemonitor
+      - POSTGRES_USER=routemonitor
+      - POSTGRES_PASSWORD=${DB_PASSWORD:-routemonitor}
+    volumes:
+      - postgres-data:/var/lib/postgresql/data
+      # Initialize with schema on first run
+      - ./init-db.sql:/docker-entrypoint-initdb.d/init.sql:ro
+    networks:
+      - route-monitor
+    ports:
+      - "15432:5432"  # Map to alternate port 15432 to avoid conflicts
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U routemonitor"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    restart: unless-stopped
+
+  # Database initialization and migration service
+  db-init:
+    build:
+      context: .
+      dockerfile: Dockerfile.db
+    container_name: route-db-init
+    environment:
+      - DATABASE_URL=postgresql://routemonitor:${DB_PASSWORD:-routemonitor}@postgres/routemonitor
+      - SNAPDIR=/app/route_snaps
+    volumes:
+      # Mount existing snapshots for migration
+      - ./route_snaps:/app/route_snaps:ro
+      # Mount encryption key (will be created if not exists)
+      - ./.encryption_key:/app/.encryption_key
+    networks:
+      - route-monitor
+    depends_on:
+      postgres:
+        condition: service_healthy
+    command: |
+      sh -c "
+        echo 'Waiting for database...' &&
+        sleep 5 &&
+        python setup_database.py --init &&
+        echo 'Database initialized' &&
+        if [ -d /app/route_snaps ]; then
+          echo 'Migrating existing data...' &&
+          python setup_database.py --migrate-devices &&
+          python setup_database.py --migrate-snapshots &&
+          echo 'Migration complete'
+        fi
+      "
+    restart: "no"  # Run once
+
+  # Route poller with database backend
+  poller:
+    build:
+      context: .
+      dockerfile: Dockerfile.db
+    container_name: route-poller-db
+    environment:
+      - DATABASE_URL=postgresql://routemonitor:${DB_PASSWORD:-routemonitor}@postgres/routemonitor
+      - POLL_INTERVAL_SEC=${POLL_INTERVAL_SEC:-60}
+      - USE_NETBOX=${USE_NETBOX:-false}
+      - NB_URL=${NB_URL}
+      - NB_TOKEN=${NB_TOKEN}
+      - USE_NXAPI=${USE_NXAPI:-false}
+      - NXAPI_SCHEME=${NXAPI_SCHEME:-https}
+      - NXAPI_PORT=${NXAPI_PORT:-443}
+      - NXAPI_VERIFY=${NXAPI_VERIFY:-false}
+    volumes:
+      # Share encryption key
+      - ./.encryption_key:/app/.encryption_key:ro
+      # Optional: Mount custom configuration
+      - ./poller_db.py:/app/poller_db.py:ro
+    networks:
+      - route-monitor
+    depends_on:
+      postgres:
+        condition: service_healthy
+      db-init:
+        condition: service_completed_successfully
+    restart: unless-stopped
+    command: python poller_db.py
+
+  # API server with database backend
+  api:
+    build:
+      context: .
+      dockerfile: Dockerfile.db
+    container_name: route-api-db
+    environment:
+      - DATABASE_URL=postgresql://routemonitor:${DB_PASSWORD:-routemonitor}@postgres/routemonitor
+    ports:
+      - "5000:5000"
+    volumes:
+      # Share encryption key
+      - ./.encryption_key:/app/.encryption_key:ro
+      # Mount web UI files
+      - ./webui:/app/webui:ro
+    networks:
+      - route-monitor
+    depends_on:
+      postgres:
+        condition: service_healthy
+      db-init:
+        condition: service_completed_successfully
+    restart: unless-stopped
+    command: uvicorn webui_db:app --host 0.0.0.0 --port 5000
+
+  # Prometheus exporter (updated to use database)
+  exporter:
+    build:
+      context: .
+      dockerfile: Dockerfile.db
+    container_name: route-exporter-db
+    environment:
+      - DATABASE_URL=postgresql://routemonitor:${DB_PASSWORD:-routemonitor}@postgres/routemonitor
+      - PROM_PORT=${PROM_PORT:-9108}
+    ports:
+      - "9108:9108"
+    volumes:
+      # Share encryption key
+      - ./.encryption_key:/app/.encryption_key:ro
+    networks:
+      - route-monitor
+    depends_on:
+      postgres:
+        condition: service_healthy
+      db-init:
+        condition: service_completed_successfully
+    restart: unless-stopped
+    command: python exporter_db.py
+
+  # Optional: Grafana for visualization
+  grafana:
+    image: grafana/grafana:latest
+    container_name: route-grafana
+    environment:
+      - GF_SECURITY_ADMIN_PASSWORD=${GRAFANA_PASSWORD:-admin}
+      - GF_INSTALL_PLUGINS=grafana-piechart-panel
+    ports:
+      - "3000:3000"
+    volumes:
+      - grafana-data:/var/lib/grafana
+      - ./grafana/dashboards:/etc/grafana/provisioning/dashboards:ro
+      - ./grafana/datasources:/etc/grafana/provisioning/datasources:ro
+    networks:
+      - route-monitor
+    restart: unless-stopped
+
+  # Optional: Prometheus for metrics collection
+  prometheus:
+    image: prom/prometheus:latest
+    container_name: route-prometheus
+    ports:
+      - "9090:9090"
+    volumes:
+      - ./prometheus.yml:/etc/prometheus/prometheus.yml:ro
+      - prometheus-data:/prometheus
+    networks:
+      - route-monitor
+    command:
+      - '--config.file=/etc/prometheus/prometheus.yml'
+      - '--storage.tsdb.path=/prometheus'
+    restart: unless-stopped
+
+  # Optional: pgAdmin for database management
+  pgadmin:
+    image: dpage/pgadmin4:latest
+    container_name: route-pgadmin
+    environment:
+      - PGADMIN_DEFAULT_EMAIL=${PGADMIN_EMAIL:-admin@example.com}
+      - PGADMIN_DEFAULT_PASSWORD=${PGADMIN_PASSWORD:-admin}
+    ports:
+      - "8080:80"
+    volumes:
+      - pgadmin-data:/var/lib/pgadmin
+    networks:
+      - route-monitor
+    depends_on:
+      - postgres
+    restart: unless-stopped
+
+networks:
+  route-monitor:
+    driver: bridge
+
+volumes:
+  postgres-data:
+  grafana-data:
+  prometheus-data:
+  pgadmin-data:

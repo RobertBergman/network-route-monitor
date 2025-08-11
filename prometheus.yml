@@ -7,10 +7,7 @@ scrape_configs:
     static_configs:
       - targets: ['exporter:9108']
         labels:
-          service: 'route-monitor'
           environment: 'production'
-    
-    # Scrape metrics from the exporter
-    metrics_path: /metrics
+          service: 'route-monitor'
     scrape_interval: 30s
     scrape_timeout: 10s
