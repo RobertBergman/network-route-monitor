@@ -38,10 +38,50 @@ def check_database_connection():
 def init_database():
     """Initialize database tables."""
     from database import init_db
+    from sqlalchemy import create_engine, text
+    from database import get_db_url
     
     print("Initializing database tables...")
     init_db()
     print("✓ Database tables created")
+    
+    # Apply migrations for VRF columns
+    print("Applying schema migrations...")
+    db_url = get_db_url()
+    engine = create_engine(db_url)
+    
+    with engine.connect() as conn:
+        # Check if VRF columns exist
+        result = conn.execute(text("""
+            SELECT column_name 
+            FROM information_schema.columns 
+            WHERE table_name = 'devices' 
+            AND column_name IN ('vrfs', 'vrfs_updated_at')
+        """))
+        
+        existing_columns = [row[0] for row in result]
+        
+        # Add vrfs column if it doesn't exist
+        if 'vrfs' not in existing_columns:
+            print("  Adding 'vrfs' column to devices table...")
+            conn.execute(text("""
+                ALTER TABLE devices 
+                ADD COLUMN vrfs TEXT
+            """))
+            conn.commit()
+            print("  ✓ Added 'vrfs' column")
+        
+        # Add vrfs_updated_at column if it doesn't exist
+        if 'vrfs_updated_at' not in existing_columns:
+            print("  Adding 'vrfs_updated_at' column to devices table...")
+            conn.execute(text("""
+                ALTER TABLE devices 
+                ADD COLUMN vrfs_updated_at TIMESTAMP
+            """))
+            conn.commit()
+            print("  ✓ Added 'vrfs_updated_at' column")
+    
+    print("✓ Schema migrations applied")
 
 
 def add_device_interactive():
