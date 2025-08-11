@@ -37,14 +37,12 @@ def discover_vrfs(device_config: Dict) -> List[str]:
     """
     vrfs = ["default"]  # Always include default VRF
     
-    device = {k: v for k, v in device_config.items() if k != "name"}
-    
     try:
         # Use NX-API if available for NX-OS devices
-        if device.get("use_nxapi") and device.get("device_type") == "cisco_nxos":
-            host = device.get("host")
-            username = device.get("username")
-            password = device.get("password")
+        if device_config.get("use_nxapi") and device_config.get("device_type") == "cisco_nxos":
+            host = device_config.get("host") or device_config.get("hostname")
+            username = device_config.get("username")
+            password = device_config.get("password")
             
             response = _nxapi_request(host, username, password, ["show vrf"])
             if response and "ins_api" in response:
@@ -62,7 +60,16 @@ def discover_vrfs(device_config: Dict) -> List[str]:
                     if vrf_name and vrf_name not in vrfs:
                         vrfs.append(vrf_name)
         else:
-            # Use SSH/CLI
+            # Use SSH/CLI - filter to only Netmiko-compatible fields
+            netmiko_fields = ["host", "hostname", "device_type", "username", "password", "port", 
+                              "secret", "verbose", "session_log", "timeout", "auth_timeout", 
+                              "banner_timeout", "conn_timeout", "fast_cli"]
+            device = {k: v for k, v in device_config.items() if k in netmiko_fields}
+            
+            # Map hostname to host if needed
+            if "hostname" in device and "host" not in device:
+                device["host"] = device.pop("hostname")
+            
             with ConnectHandler(**device) as conn:
                 # Try JSON first
                 parsed = _try_json(conn, "show vrf")
