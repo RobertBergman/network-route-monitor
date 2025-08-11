@@ -7,8 +7,9 @@ USER root
 RUN grafana-cli --pluginsDir "/var/lib/grafana/plugins" plugins install grafana-piechart-panel || \
     (echo "Plugin installation failed, continuing without it" && exit 0)
 
-# Copy provisioning files if they exist
-COPY grafana/dashboards/ /etc/grafana/provisioning/dashboards/ 2>/dev/null || :
-COPY grafana/datasources/ /etc/grafana/provisioning/datasources/ 2>/dev/null || :
+# Copy provisioning files (directories must exist in the build context)
+# If they don't exist, create empty directories in the repo
+COPY grafana/dashboards/ /etc/grafana/provisioning/dashboards/
+COPY grafana/datasources/ /etc/grafana/provisioning/datasources/
 
 USER grafana
