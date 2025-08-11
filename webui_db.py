@@ -10,12 +10,34 @@ from fastapi import FastAPI, HTTPException, Query
 from fastapi.responses import JSONResponse
 from fastapi.staticfiles import StaticFiles
 from fastapi.middleware.cors import CORSMiddleware
+from pydantic import BaseModel
 
 from database import get_session
 from device_manager import DeviceManager
 from storage_db import DatabaseStorage
 
 APP_TITLE = "Route Monitor - Database Edition"
+
+# Pydantic models for request/response
+class DeviceCreate(BaseModel):
+    name: str
+    hostname: str
+    device_type: str
+    username: str
+    password: str
+    port: int = 22
+    enabled: bool = True
+    use_nxapi: bool = False
+
+class DeviceUpdate(BaseModel):
+    name: Optional[str] = None
+    hostname: Optional[str] = None
+    device_type: Optional[str] = None
+    username: Optional[str] = None
+    password: Optional[str] = None
+    port: Optional[int] = None
+    enabled: Optional[bool] = None
+    use_nxapi: Optional[bool] = None
 
 app = FastAPI(title=APP_TITLE)
 
@@ -30,21 +52,126 @@ app.add_middleware(
 
 
 @app.get("/api/devices")
-def list_devices():
-    """List all enabled devices."""
+def list_devices(all_devices: bool = Query(False, description="Include disabled devices")):
+    """List all devices."""
     manager = DeviceManager()
     try:
-        devices = manager.get_all_devices(enabled_only=True)
+        devices = manager.get_all_devices(enabled_only=not all_devices)
         return [
             {
+                "id": d.id,
                 "name": d.name,
                 "hostname": d.hostname,
                 "device_type": d.device_type,
+                "username": d.username,
+                "port": d.port,
                 "enabled": d.enabled,
                 "use_nxapi": d.use_nxapi,
+                "created_at": d.created_at.isoformat() if d.created_at else None,
+                "updated_at": d.updated_at.isoformat() if d.updated_at else None,
             }
             for d in devices
         ]
+    finally:
+        manager.close()
+
+
+@app.post("/api/devices")
+def create_device(device: DeviceCreate):
+    """Create a new device."""
+    manager = DeviceManager()
+    try:
+        new_device = manager.add_device(
+            name=device.name,
+            hostname=device.hostname,
+            device_type=device.device_type,
+            username=device.username,
+            password=device.password,
+            port=device.port,
+            enabled=device.enabled,
+            use_nxapi=device.use_nxapi,
+        )
+        return {
+            "id": new_device.id,
+            "name": new_device.name,
+            "hostname": new_device.hostname,
+            "device_type": new_device.device_type,
+            "username": new_device.username,
+            "port": new_device.port,
+            "enabled": new_device.enabled,
+            "use_nxapi": new_device.use_nxapi,
+            "created_at": new_device.created_at.isoformat() if new_device.created_at else None,
+        }
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e))
+    finally:
+        manager.close()
+
+
+@app.get("/api/devices/{device_name}")
+def get_device(device_name: str):
+    """Get a specific device by name."""
+    manager = DeviceManager()
+    try:
+        device = manager.get_device(device_name)
+        if device is None:
+            raise HTTPException(status_code=404, detail="Device not found")
+        return {
+            "id": device.id,
+            "name": device.name,
+            "hostname": device.hostname,
+            "device_type": device.device_type,
+            "username": device.username,
+            "port": device.port,
+            "enabled": device.enabled,
+            "use_nxapi": device.use_nxapi,
+            "created_at": device.created_at.isoformat() if device.created_at else None,
+            "updated_at": device.updated_at.isoformat() if device.updated_at else None,
+        }
+    finally:
+        manager.close()
+
+
+@app.put("/api/devices/{device_name}")
+def update_device(device_name: str, device: DeviceUpdate):
+    """Update an existing device."""
+    manager = DeviceManager()
+    try:
+        # Get existing device
+        existing = manager.get_device(device_name)
+        if existing is None:
+            raise HTTPException(status_code=404, detail="Device not found")
+        
+        # Update only provided fields
+        update_data = device.dict(exclude_unset=True)
+        updated_device = manager.update_device(device_name, **update_data)
+        
+        return {
+            "id": updated_device.id,
+            "name": updated_device.name,
+            "hostname": updated_device.hostname,
+            "device_type": updated_device.device_type,
+            "username": updated_device.username,
+            "port": updated_device.port,
+            "enabled": updated_device.enabled,
+            "use_nxapi": updated_device.use_nxapi,
+            "updated_at": updated_device.updated_at.isoformat() if updated_device.updated_at else None,
+        }
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e))
+    finally:
+        manager.close()
+
+
+@app.delete("/api/devices/{device_name}")
+def delete_device(device_name: str):
+    """Delete a device."""
+    manager = DeviceManager()
+    try:
+        success = manager.delete_device(device_name)
+        if not success:
+            raise HTTPException(status_code=404, detail="Device not found")
+        return {"message": f"Device {device_name} deleted successfully"}
     finally:
         manager.close()
 

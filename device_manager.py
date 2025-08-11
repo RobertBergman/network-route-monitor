@@ -61,20 +61,57 @@ class DeviceManager:
             query = query.filter_by(enabled=True)
         return query.all()
     
+    def add_device(
+        self,
+        name: str,
+        hostname: str,
+        device_type: str,
+        username: str,
+        password: str,
+        port: int = 22,
+        enabled: bool = True,
+        use_nxapi: bool = False
+    ) -> Device:
+        """Add a new device."""
+        # Check if device with same name already exists
+        existing = self.get_device(name=name)
+        if existing:
+            raise ValueError(f"Device with name '{name}' already exists")
+        
+        device = Device(
+            name=name,
+            hostname=hostname,
+            device_type=device_type,
+            username=username,
+            password=password,  # Will be encrypted by setter
+            port=port,
+            enabled=enabled,
+            use_nxapi=use_nxapi
+        )
+        
+        try:
+            self.session.add(device)
+            self.session.commit()
+            self.session.refresh(device)
+            return device
+        except IntegrityError:
+            self.session.rollback()
+            raise ValueError(f"Failed to add device - duplicate name or constraint violation")
+    
     def update_device(
         self,
-        device_id: int,
+        name: str,
         **kwargs
     ) -> Optional[Device]:
-        """Update device fields."""
-        device = self.get_device(device_id=device_id)
+        """Update device fields by name."""
+        device = self.get_device(name=name)
         if not device:
             return None
         
         for key, value in kwargs.items():
-            if key == "password":
+            if key == "password" and value:  # Only update password if provided
                 device.password = value  # Use setter for encryption
-            elif hasattr(device, key):
+            elif key != "password" and hasattr(device, key):
                 setattr(device, key, value)
         
         try:
@@ -85,9 +122,9 @@ class DeviceManager:
             self.session.rollback()
             raise ValueError(f"Update failed - duplicate name or constraint violation")
     
-    def delete_device(self, device_id: int) -> bool:
-        """Delete a device and all its snapshots."""
-        device = self.get_device(device_id=device_id)
+    def delete_device(self, name: str) -> bool:
+        """Delete a device and all its snapshots by name."""
+        device = self.get_device(name=name)
         if not device:
             return False
         
@@ -95,14 +132,14 @@ class DeviceManager:
         self.session.commit()
         return True
     
-    def enable_device(self, device_id: int) -> bool:
+    def enable_device(self, name: str) -> bool:
         """Enable a device for monitoring."""
-        device = self.update_device(device_id, enabled=True)
+        device = self.update_device(name, enabled=True)
         return device is not None
     
-    def disable_device(self, device_id: int) -> bool:
+    def disable_device(self, name: str) -> bool:
         """Disable a device from monitoring."""
-        device = self.update_device(device_id, enabled=False)
+        device = self.update_device(name, enabled=False)
         return device is not None
     
     def import_devices(self, devices: List[Dict[str, Any]]) -> List[Device]:

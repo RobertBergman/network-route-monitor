@@ -321,7 +321,7 @@
     state.devices = Array.isArray(d) ? d : (d.devices || []);
     console.log("State devices:", state.devices);
     // Extract just the device names for the dropdown
-    const deviceNames = state.devices.map(dev => dev.name || dev);
+    const deviceNames = state.devices.map(dev => typeof dev === 'string' ? dev : (dev.name || dev));
     console.log("Device names for dropdown:", deviceNames);
     setOptions(els.device, deviceNames, false);
     console.log("Dropdown options set");
