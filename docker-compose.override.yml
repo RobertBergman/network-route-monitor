@@ -1,0 +1,9 @@
+version: '3.8'
+
+services:
+  # Override Grafana configuration to fix TLS certificate issue
+  grafana:
+    environment:
+      - GF_SECURITY_ADMIN_PASSWORD=${GRAFANA_PASSWORD:-admin}
+      # Remove the GF_INSTALL_PLUGINS that's causing the TLS error
+      # Plugins can be installed manually after container starts if needed
