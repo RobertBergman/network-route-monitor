@@ -10,6 +10,11 @@ python-dotenv>=1.0
 # Optional NetBox inventory
 pynetbox>=7.3
 
+# Database
+sqlalchemy>=2.0
+psycopg2-binary>=2.9
+cryptography>=41.0
+
 # Utils
 ujson>=5.10
 requests>=2.32    # NX-API (optional)
