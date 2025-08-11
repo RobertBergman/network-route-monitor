@@ -113,8 +113,15 @@ jobs:
 
       - name: Create component Dockerfile
         run: |
-          cat > Dockerfile.${{ matrix.component }} << 'EOF'
-          FROM ${{ env.REGISTRY }}/${{ steps.repo.outputs.name }}:${{ github.sha }}
+          # Use the branch name as the base image tag
+          if [ "${{ github.ref }}" = "refs/heads/main" ]; then
+            BASE_TAG="latest"
+          else
+            BASE_TAG="${{ github.ref_name }}"
+          fi
+          
+          cat > Dockerfile.${{ matrix.component }} << EOF
+          FROM ${{ env.REGISTRY }}/${{ steps.repo.outputs.name }}:${BASE_TAG}
           EOF
           
           if [ "${{ matrix.component }}" = "poller" ]; then
