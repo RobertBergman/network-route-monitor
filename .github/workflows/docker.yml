@@ -78,6 +78,7 @@ jobs:
           - exporter
           - api
           - grafana
+          - db
     needs: build-and-push
     
     steps:
@@ -121,10 +122,13 @@ jobs:
             BASE_TAG="${{ github.ref_name }}"
           fi
           
-          # Special handling for Grafana component
+          # Special handling for Grafana and DB components
           if [ "${{ matrix.component }}" = "grafana" ]; then
             # Grafana uses its own Dockerfile
             echo "Using Dockerfile.grafana for Grafana build"
+          elif [ "${{ matrix.component }}" = "db" ]; then
+            # Database version uses its own Dockerfile
+            echo "Using Dockerfile.db for database build"
           else
             cat > Dockerfile.${{ matrix.component }} << EOF
           FROM ${{ env.REGISTRY }}/${{ steps.repo.outputs.name }}:${BASE_TAG}
@@ -143,7 +147,7 @@ jobs:
         uses: docker/build-push-action@v5
         with:
           context: .
-          file: ${{ matrix.component == 'grafana' && 'Dockerfile.grafana' || format('Dockerfile.{0}', matrix.component) }}
+          file: ${{ (matrix.component == 'grafana' && 'Dockerfile.grafana') || (matrix.component == 'db' && 'Dockerfile.db') || format('Dockerfile.{0}', matrix.component) }}
           platforms: linux/amd64,linux/arm64
           push: ${{ github.event_name != 'pull_request' }}
           tags: ${{ steps.meta.outputs.tags }}
