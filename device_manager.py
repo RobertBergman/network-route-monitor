@@ -1,6 +1,7 @@
 """Device management CRUD operations."""
 
 from typing import List, Optional, Dict, Any
+from datetime import datetime, timedelta
 from sqlalchemy.orm import Session
 from sqlalchemy.exc import IntegrityError
 
@@ -171,6 +172,36 @@ class DeviceManager:
             }
             for d in devices
         ]
+    
+    def update_vrfs(self, name: str, vrfs: List[str]) -> bool:
+        """Update the cached VRFs for a device."""
+        device = self.get_device(name=name)
+        if not device:
+            return False
+        
+        device.vrfs = ",".join(vrfs) if vrfs else None
+        device.vrfs_updated_at = datetime.utcnow()
+        
+        try:
+            self.session.commit()
+            return True
+        except Exception:
+            self.session.rollback()
+            return False
+    
+    def get_cached_vrfs(self, name: str, max_age_hours: int = 24) -> Optional[List[str]]:
+        """Get cached VRFs for a device if they're not too old."""
+        device = self.get_device(name=name)
+        if not device or not device.vrfs:
+            return None
+        
+        # Check if cache is too old
+        if device.vrfs_updated_at:
+            age = datetime.utcnow() - device.vrfs_updated_at
+            if age > timedelta(hours=max_age_hours):
+                return None  # Cache is too old
+        
+        return device.vrfs.split(",") if device.vrfs else None
     
     def close(self):
         """Close database session."""

@@ -13,7 +13,7 @@ from typing import List, Dict, Any
 import ujson as json
 from dotenv import load_dotenv
 
-from parsers import collect_device_tables
+from parsers import collect_device_tables, discover_vrfs
 from models import RIBEntry, BGPEntry, AFI4, AFI6
 from database import get_session
 from device_manager import DeviceManager
@@ -76,16 +76,45 @@ def collect_and_persist_for_device(dev: Dict, storage: DatabaseStorage) -> Dict[
     return report
 
 
-def get_inventory_from_db(manager: DeviceManager) -> List[Dict]:
-    """Get device inventory from database."""
+def get_inventory_from_db(manager: DeviceManager, discover_vrfs_enabled: bool = True) -> List[Dict]:
+    """Get device inventory from database with dynamic VRF discovery."""
     devices = manager.get_all_devices(enabled_only=True)
     inventory = []
+    use_vrf_cache = os.environ.get("USE_VRF_CACHE", "true").lower() == "true"
+    vrf_cache_hours = int(os.environ.get("VRF_CACHE_HOURS", "24"))
     
     for device in devices:
         dev_dict = device.to_dict()
-        # Add all VRFs - could be made configurable per-device
-        # For NX-OS, we'll collect from these common VRFs
-        dev_dict["vrfs"] = ["default", "AWS", "Azure", "CUSTOMER_A", "D3PQA", "D3Pprod", "ITTD", "NAP", "management"]
+        
+        # Try to get cached VRFs first
+        cached_vrfs = None
+        if use_vrf_cache:
+            cached_vrfs = manager.get_cached_vrfs(device.name, max_age_hours=vrf_cache_hours)
+            if cached_vrfs:
+                print(f"Using cached VRFs for {device.name}: {', '.join(cached_vrfs)}")
+                dev_dict["vrfs"] = cached_vrfs
+        
+        # If no valid cache, discover VRFs from the device
+        if not cached_vrfs and discover_vrfs_enabled:
+            try:
+                print(f"Discovering VRFs for {device.name}...")
+                discovered_vrfs = discover_vrfs(dev_dict)
+                dev_dict["vrfs"] = discovered_vrfs
+                print(f"  Found VRFs: {', '.join(discovered_vrfs)}")
+                
+                # Update cache
+                if use_vrf_cache:
+                    manager.update_vrfs(device.name, discovered_vrfs)
+                    print(f"  Cached VRFs for future use")
+                    
+            except Exception as e:
+                print(f"  Error discovering VRFs for {device.name}: {e}")
+                # Fall back to default VRF only
+                dev_dict["vrfs"] = ["default"]
+        elif not cached_vrfs:
+            # Use only default VRF if discovery is disabled and no cache
+            dev_dict["vrfs"] = ["default"]
+        
         dev_dict["afis"] = [AFI4, AFI6]
         inventory.append(dev_dict)
     

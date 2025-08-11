@@ -59,6 +59,8 @@ class Device(Base):
     port = Column(Integer, default=22)
     use_nxapi = Column(Boolean, default=False)
     enabled = Column(Boolean, default=True)
+    vrfs = Column(Text, nullable=True)  # Comma-separated list of discovered VRFs
+    vrfs_updated_at = Column(DateTime, nullable=True)  # When VRFs were last discovered
     created_at = Column(DateTime, default=datetime.utcnow)
     updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
     

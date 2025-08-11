@@ -30,6 +30,76 @@ def _try_json(conn, cmd: str) -> Optional[Dict]:
         pass
     return None
 
+def discover_vrfs(device_config: Dict) -> List[str]:
+    """
+    Discover all VRFs configured on a device.
+    Returns a list of VRF names including 'default'.
+    """
+    vrfs = ["default"]  # Always include default VRF
+    
+    device = {k: v for k, v in device_config.items() if k != "name"}
+    
+    try:
+        # Use NX-API if available for NX-OS devices
+        if device.get("use_nxapi") and device.get("device_type") == "cisco_nxos":
+            host = device.get("host")
+            username = device.get("username")
+            password = device.get("password")
+            
+            response = _nxapi_request(host, username, password, ["show vrf"])
+            if response and "ins_api" in response:
+                outputs = response["ins_api"].get("outputs", {}).get("output", {})
+                body = outputs.get("body", {}) if isinstance(outputs, dict) else {}
+                
+                # Parse VRF table
+                vrf_table = body.get("TABLE_vrf", {})
+                vrf_rows = vrf_table.get("ROW_vrf", [])
+                if isinstance(vrf_rows, dict):
+                    vrf_rows = [vrf_rows]
+                
+                for vrf_row in vrf_rows:
+                    vrf_name = vrf_row.get("vrf_name")
+                    if vrf_name and vrf_name not in vrfs:
+                        vrfs.append(vrf_name)
+        else:
+            # Use SSH/CLI
+            with ConnectHandler(**device) as conn:
+                # Try JSON first
+                parsed = _try_json(conn, "show vrf")
+                if parsed:
+                    # Parse JSON VRF output
+                    vrf_table = parsed.get("TABLE_vrf", {})
+                    vrf_rows = vrf_table.get("ROW_vrf", [])
+                    if isinstance(vrf_rows, dict):
+                        vrf_rows = [vrf_rows]
+                    
+                    for vrf_row in vrf_rows:
+                        vrf_name = vrf_row.get("vrf_name")
+                        if vrf_name and vrf_name not in vrfs:
+                            vrfs.append(vrf_name)
+                else:
+                    # Fall back to text parsing
+                    output = conn.send_command("show vrf")
+                    # Simple text parsing for VRF names
+                    for line in output.split('\n'):
+                        line = line.strip()
+                        # Skip headers and empty lines
+                        if not line or line.startswith('Name') or line.startswith('---'):
+                            continue
+                        # VRF name is typically the first column
+                        parts = line.split()
+                        if parts:
+                            vrf_name = parts[0]
+                            if vrf_name and vrf_name not in vrfs and not vrf_name.startswith('*'):
+                                vrfs.append(vrf_name)
+                                
+    except Exception as e:
+        print(f"Error discovering VRFs: {e}")
+        # Return at least default VRF on error
+        return ["default"]
+    
+    return vrfs
+
 def _nxapi_request(host: str, username: str, password: str, cmds: List[str]) -> Optional[Dict]:
     """
     Use NX-API JSON to run one or more show commands and return the first response.
