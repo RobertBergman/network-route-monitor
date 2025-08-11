@@ -66,11 +66,10 @@ check_prerequisites() {
 pull_images() {
     print_message "$YELLOW" "🐳 Pulling latest Docker images from GHCR..."
     
-    # Define images to pull
+    # Define images to pull (database-backed versions)
     IMAGES=(
-        "${REGISTRY}/${REPO}-poller:latest"
-        "${REGISTRY}/${REPO}-exporter:latest"
-        "${REGISTRY}/${REPO}-api:latest"
+        "${REGISTRY}/${REPO}-db:latest"
+        "${REGISTRY}/${REPO}-grafana:latest"
     )
     
     # Pull each image
@@ -91,8 +90,15 @@ pull_images() {
 stop_containers() {
     print_message "$YELLOW" "🛑 Stopping existing containers..."
     
-    if docker-compose -f "$COMPOSE_FILE" ps -q | grep -q .; then
-        docker-compose -f "$COMPOSE_FILE" down
+    # Try docker compose (v2) first, then fall back to docker-compose (v1)
+    if docker compose version &> /dev/null; then
+        COMPOSE_CMD="docker compose"
+    else
+        COMPOSE_CMD="docker-compose"
+    fi
+    
+    if $COMPOSE_CMD -f "$COMPOSE_FILE" ps -q | grep -q .; then
+        $COMPOSE_CMD -f "$COMPOSE_FILE" down
         print_message "$GREEN" "✅ Existing containers stopped."
     else
         print_message "$YELLOW" "ℹ️  No existing containers to stop."
@@ -103,11 +109,15 @@ stop_containers() {
 start_containers() {
     print_message "$YELLOW" "🚀 Starting containers..."
     
-    # Create data directory if it doesn't exist
-    mkdir -p route_snaps
+    # Try docker compose (v2) first, then fall back to docker-compose (v1)
+    if docker compose version &> /dev/null; then
+        COMPOSE_CMD="docker compose"
+    else
+        COMPOSE_CMD="docker-compose"
+    fi
     
     # Start containers in detached mode
-    if docker-compose -f "$COMPOSE_FILE" up -d; then
+    if $COMPOSE_CMD -f "$COMPOSE_FILE" up -d; then
         print_message "$GREEN" "✅ Containers started successfully."
     else
         print_message "$RED" "❌ Failed to start containers."
@@ -118,13 +128,21 @@ start_containers() {
 # Function to show container status
 show_status() {
     print_message "$YELLOW" "📊 Container Status:"
-    docker-compose -f "$COMPOSE_FILE" ps
+    
+    # Try docker compose (v2) first, then fall back to docker-compose (v1)
+    if docker compose version &> /dev/null; then
+        COMPOSE_CMD="docker compose"
+    else
+        COMPOSE_CMD="docker-compose"
+    fi
+    
+    $COMPOSE_CMD -f "$COMPOSE_FILE" ps
     
     echo ""
     print_message "$GREEN" "🌐 Service URLs:"
-    echo "  - Web UI: http://localhost:5000"
+    echo "  - Web UI: http://localhost:8080"
+    echo "  - Device Management: http://localhost:8080/devices.html"
     echo "  - Prometheus Metrics: http://localhost:9108/metrics"
-    echo "  - Nginx (if enabled): http://localhost:80"
     echo "  - Prometheus (if enabled): http://localhost:9090"
     echo "  - Grafana (if enabled): http://localhost:3000"
 }
@@ -132,7 +150,15 @@ show_status() {
 # Function to show logs
 show_logs() {
     print_message "$YELLOW" "📝 Recent logs (last 20 lines):"
-    docker-compose -f "$COMPOSE_FILE" logs --tail=20
+    
+    # Try docker compose (v2) first, then fall back to docker-compose (v1)
+    if docker compose version &> /dev/null; then
+        COMPOSE_CMD="docker compose"
+    else
+        COMPOSE_CMD="docker-compose"
+    fi
+    
+    $COMPOSE_CMD -f "$COMPOSE_FILE" logs --tail=20
 }
 
 # Function to perform health checks
@@ -143,7 +169,7 @@ health_check() {
     sleep 5
     
     # Check API health
-    if curl -s -o /dev/null -w "%{http_code}" http://localhost:5000/api/health | grep -q "200"; then
+    if curl -s -o /dev/null -w "%{http_code}" http://localhost:8080/api/status | grep -q "200"; then
         print_message "$GREEN" "  ✅ API is healthy"
     else
         print_message "$YELLOW" "  ⚠️  API is not responding (might still be starting)"
@@ -199,7 +225,15 @@ main() {
             check_prerequisites
             pull_images
             print_message "$YELLOW" "🔄 Recreating containers with new images..."
-            docker-compose -f "$COMPOSE_FILE" up -d --force-recreate
+            
+            # Try docker compose (v2) first, then fall back to docker-compose (v1)
+            if docker compose version &> /dev/null; then
+                COMPOSE_CMD="docker compose"
+            else
+                COMPOSE_CMD="docker-compose"
+            fi
+            
+            $COMPOSE_CMD -f "$COMPOSE_FILE" up -d --force-recreate
             health_check
             show_status
             ;;
